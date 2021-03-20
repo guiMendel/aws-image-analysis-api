@@ -1,8 +1,5 @@
 "use strict"
-// bib para ler arquivos
-const {
-  promises: { readFile },
-} = require("fs")
+const axios = require("axios")
 
 class Handler {
   constructor({ rekoSvc, translatorSvc }) {
@@ -37,25 +34,63 @@ class Handler {
       Text,
     }
 
-    return await this.translatorSvc.translateText(params).promise()
+    const { TranslatedText } = await this.translatorSvc
+      .translateText(params)
+      .promise()
+
+    return TranslatedText.split(" e ")
+  }
+
+  // Constroi uma lista com mensagens com as chances de cada rotulo
+  formatTextResults(texts, workingItems) {
+    const formattedText = []
+
+    for (const index in texts) {
+      // Acessa o nome traduzido
+      const portugueseName = texts[index]
+      // Acessa a confianca
+      const confidence = workingItems[index].Confidence
+      formattedText.push(
+        `${confidence.toFixed(2)}% de chance de conter ${portugueseName}`,
+      )
+    }
+
+    return formattedText
+  }
+
+  async getImageBuffer(imageUrl) {
+    return await axios
+      .get(imageUrl, {
+        responseType: "arraybuffer",
+      })
+      .then(({ data }) => Buffer.from(data, "base64"))
   }
 
   async main(event) {
     try {
-      console.log("Detecting labels...")
+      const { imageUrl } = event.queryStringParameters
 
-      const imgBuffer = await readFile("./images/meme.jpg")
-      const { names, workingItems } = await this.detectImageLabels(imgBuffer)
+      console.log("Downloading image...")
+      const imageBuffer = await this.getImageBuffer(imageUrl)
+
+      console.log("Detecting labels...")
+      const { names, workingItems } = await this.detectImageLabels(imageBuffer)
 
       console.log("Translating results to portuguese...")
-
       const translatedNames = await this.translateText(names)
 
-      console.log(translatedNames)
+      // console.log(names, workingItems, translatedNames)
+      console.log("Formatting text...")
+      const formattedText = await this.formatTextResults(
+        translatedNames,
+        workingItems,
+      )
+
+      console.log("Wrapping up...")
 
       return {
         statusCode: 200,
-        body: "Hey Jude",
+        body: `A imagem tem:\n${formattedText.join("\n")}`,
       }
     } catch (error) {
       console.log("Error: ", error.stack)
@@ -69,6 +104,7 @@ class Handler {
 
 // factory
 const aws = require("aws-sdk")
+const { format } = require("path")
 const rekoSvc = new aws.Rekognition()
 const translatorSvc = new aws.Translate()
 const handler = new Handler({
